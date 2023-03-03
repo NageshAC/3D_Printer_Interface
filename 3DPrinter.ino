@@ -29,7 +29,7 @@ void setup(){
   WiFiManagerParameter* botTokenParam {new WiFiManagerParameter("botToken", "Bot Token", BOT_TOKEN, 50)};
   wifiManager -> addParameter(botTokenParam);
   wifiManager -> autoConnect(AP_NAME, AP_PASSWORD);
-  
+
   // Creating Telebot in heap
   telebot = new Telebot(botTokenParam -> getValue());
 
@@ -48,7 +48,5 @@ void setup(){
 
 void loop(){
   if(telebot -> is_connected())
-    Serial.println("Checking......");
     telebot -> handleMsgs();
-    delay(1000);
 }

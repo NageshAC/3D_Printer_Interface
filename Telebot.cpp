@@ -7,24 +7,52 @@ Telebot::Telebot(const String token)
 {
   // Add root certificate for api.telegram.org
   _client.setCACert(TELEGRAM_CERTIFICATE_ROOT);
+
+  // Initialize SD card
+  initSD();
+
 }
 
+const bool Telebot::initSD(){
+  if(SD_MMC.begin()){
+    #ifdef DEBUG
+    Serial.println("Card Mount Successful");
+    #endif
+    _sdInit = true;
+  }
+  else {
+    #ifdef DEBUG
+    Serial.println("Card Mount Failed");
+    #endif
+  }
+  return _sdInit;
+}
 
 // Handle new messages sent by user
 void Telebot::handleMsgs(){
 
   short n = _bot.getUpdates(_bot.last_message_received + 1);
 
+  if (!n) return;
+
   for (short msgIdx = 0; msgIdx < n; msgIdx++){
+
     String ChatID = _bot.messages[msgIdx].chat_id;
-    String Msg    = _bot.messages[msgIdx].text;
+
+    // if busy in printing or downloading file then print busy message and do nothing
+    if(_isBusy){
+     sendBusyMsg(ChatID);
+     return;
+    }
+
+    String Msg      = _bot.messages[msgIdx].text;
     bool is_caption = false;
     
     #ifdef DEBUG
       Serial.println(Msg);
     #endif
 
-    if (Msg == ""){
+    if (Msg == "" && _bot.messages[msgIdx].hasDocument){
       #ifdef DEBUG
         Serial.println(_bot.messages[msgIdx].file_caption);
       #endif
@@ -54,63 +82,146 @@ void Telebot::handleMsgs(){
 }
 
 // Handles /print command
-void Telebot::handlePrint(const short msgIdx, const bool is_caption){
-  if (_bot.messages[msgIdx].hasDocument && is_caption){
-    Serial.print("text        ");
-    Serial.println(_bot.messages[msgIdx].text);
-    Serial.print("chat_id     ");
-    Serial.println(_bot.messages[msgIdx].chat_id);
-    Serial.print("chat_title      ");
-    Serial.println(_bot.messages[msgIdx].chat_title);
-    Serial.print("from_id     ");
-    Serial.println(_bot.messages[msgIdx].from_id);
-    Serial.print("from_name     ");
-    Serial.println(_bot.messages[msgIdx].from_name);
-    Serial.print("date      ");
-    Serial.println(_bot.messages[msgIdx].date);
-    Serial.print("type      ");
-    Serial.println(_bot.messages[msgIdx].type);
-    Serial.print("file_caption      ");
-    Serial.println(_bot.messages[msgIdx].file_caption);
-    Serial.print("file_path     ");
-    Serial.println(_bot.messages[msgIdx].file_path);
-    Serial.print("file_name     ");
-    Serial.println(_bot.messages[msgIdx].file_name);
-    Serial.print("hasDocument     ");
-    Serial.println(_bot.messages[msgIdx].hasDocument);
-    Serial.print("file_size     ");
-    Serial.println(_bot.messages[msgIdx].file_size);
-    Serial.print("longitude     ");
-    Serial.println(_bot.messages[msgIdx].longitude);
-    Serial.print("latitude      ");
-    Serial.println(_bot.messages[msgIdx].latitude);
-    Serial.print("update_id     ");
-    Serial.println(_bot.messages[msgIdx].update_id);
-    Serial.print("message_id      ");
-    Serial.println(_bot.messages[msgIdx].message_id)  ;
-
-    Serial.print("reply_to_message_id     ");
-    Serial.println(_bot.messages[msgIdx].reply_to_message_id);
-    Serial.print("reply_to_text     ");
-    Serial.println(_bot.messages[msgIdx].reply_to_text);
-    Serial.print("query_id      ");
-    Serial.println(_bot.messages[msgIdx].query_id);
+const bool Telebot::handlePrint(const short msgIdx, const bool is_caption){
+  String USAGE_INFO = "No file uploaded.\nUpload the file and type /print as the caption.";
+  if (is_caption){
+    downloadFile(_bot.messages[msgIdx]);
   }
   else {
+    #ifdef DEBUG
     Serial.println("File not attached.");
+    #endif
+    sendMsg(_bot.messages[msgIdx].chat_id, USAGE_INFO);
+    return false;
   }
-  _bot.sendMessage(_bot.messages[msgIdx].chat_id, NOT_IMPLIMENTED);
-  return;
+  sendMsg(_bot.messages[msgIdx].chat_id, NOT_IMPLIMENTED);
+  return true;
+}
+
+// Download file and save to SD card
+inline const bool Telebot::downloadFile(const telegramMessage& tMsg){
+  // Download a file from given URL
+  // Save it under the folder name "from_name"
+  // and name it as "file_name"
+
+  // if SD card not initialize
+  if (!_sdInit){
+    if (!initSD()){
+      sendMsg(tMsg.chat_id, SD_ERR);      
+    }
+  }
+
+  sendMsg(tMsg.chat_id, DOWNLOADING_FILE);
+  _isBusy = true;
+
+  // Getting file content from telegram server
+  String urlPath {tMsg.file_path};
+  urlPath = urlPath.substring(25); // length of "https://api.telegram.org/"
+  // String fileContent {_bot.sendGetToTelegram(urlPath).c_str()};
+
+  // Saving it in folder "<chat_id>" as "<file_name>"
+  String folderPath {"/" + tMsg.chat_id};
+  String filePath {"/" + tMsg.file_name};
+  
+  // if folder doesn't exits -> create
+  if (!SD_MMC.exists(folderPath)){
+    #ifdef DEBUG
+    Serial.print("Creating folder: ");
+    Serial.println(folderPath);
+    #endif
+    SD_MMC.mkdir(folderPath);
+  }
+
+  File file = SD_MMC.open(folderPath + filePath, FILE_WRITE);
+
+  // Checking connection to BOT
+  if (!_client.connected()) {
+    #ifdef DEBUG  
+        Serial.println(F("[BOT]Connecting to server"));
+    #endif
+    if (!_client.connect(TELEGRAM_HOST, TELEGRAM_SSL_PORT)) {
+      #ifdef DEBUG  
+        Serial.println(F("[BOT]Conection error"));
+      #endif
+    }
+  }
+
+  String _filePath;
+  long   _fileSize;
+
+  // Send "GET" request
+  if (_client.connected()) {
+
+    #ifdef DEBUG  
+        Serial.println("sending: " + urlPath);
+    #endif  
+
+    _client.print(F("GET /"));
+    _client.print(urlPath);
+    _client.println(F(" HTTP/1.1"));
+    _client.println(F("Host:" TELEGRAM_HOST));
+    _client.println(F("Accept: application/json"));
+    _client.println(F("Cache-Control: no-cache"));
+    _client.println();
+
+    // Recieving Responce
+    if (file){
+      unsigned long now = millis();
+      bool finishedHeaders = false;
+      bool currentLineIsBlank = true;
+      bool responseReceived = false;
+      
+      while (millis() - now < WAITING_TIME_RESPONSE) {
+        while (_client.available()) {
+          char c = _client.read();
+          responseReceived = true;
+
+          if (!finishedHeaders) {
+            if (currentLineIsBlank && c == '\n') finishedHeaders = true;
+          } else {
+            file.write(c);
+            Serial.print(c);
+          }
+          if (c == '\n') currentLineIsBlank = true;
+          else if (c != '\r') currentLineIsBlank = false;
+        }
+
+        if (responseReceived)
+          break;
+      }
+
+      #ifdef DEBUG
+          Serial.print("\nTransfer Time:  ");
+          Serial.println(millis() - now );
+      #endif
+
+      file.close();
+    } else {
+      sendMsg(tMsg.chat_id, DOWNLOAD_FAILED);
+      _isBusy = false;
+      return false;
+    }
+
+  }
+
+  Serial.println(_isBusy);
+  _isBusy = false;
+  sendMsg(tMsg.chat_id, DONE_DOWNLOADING);
+  Serial.println(_isBusy);
+  // sPrint_telegramMessage(tMsg);
+  return true;
 }
 
 // Handle /status and /update commands
-void Telebot::handleStatus(const short msgIdx){
+const bool Telebot::handleStatus(const short msgIdx){
   sendMsg(_bot.messages[msgIdx].chat_id, NOT_IMPLIMENTED);
+  return true;
 }
 
 // Handle /video request 
-void Telebot::handleVideo(const short msgIdx){
+const bool Telebot::handleVideo(const short msgIdx){
   sendMsg(_bot.messages[msgIdx].chat_id, NOT_IMPLIMENTED);
+  return true;
 }
 
 // Helper function to send simple message
@@ -131,4 +242,45 @@ const String Telebot::get_token() const{
 // bot is established
 const bool Telebot::is_connected(){
   return _bot.getMe();
+}
+
+void Telebot::sPrint_telegramMessage(const telegramMessage& tMsg) const {
+  Serial.print("  text_____________________________  ");
+  Serial.println(tMsg.text);
+  Serial.print("  chat_id__________________________  ");
+  Serial.println(tMsg.chat_id);
+  Serial.print("  chat_title_______________________  ");
+  Serial.println(tMsg.chat_title);
+  Serial.print("  from_id__________________________  ");
+  Serial.println(tMsg.from_id);
+  Serial.print("  from_name________________________  ");
+  Serial.println(tMsg.from_name);
+  Serial.print("  date_____________________________  ");
+  Serial.println(tMsg.date);
+  Serial.print("  type_____________________________  ");
+  Serial.println(tMsg.type);
+  Serial.print("  file_caption_____________________  ");
+  Serial.println(tMsg.file_caption);
+  Serial.print("  file_path________________________  ");
+  Serial.println(tMsg.file_path);
+  Serial.print("  file_name________________________  ");
+  Serial.println(tMsg.file_name);
+  Serial.print("  hasDocument______________________  ");
+  Serial.println(tMsg.hasDocument);
+  Serial.print("  file_size________________________  ");
+  Serial.println(tMsg.file_size);
+  Serial.print("  longitude________________________  ");
+  Serial.println(tMsg.longitude);
+  Serial.print("  latitude_________________________  ");
+  Serial.println(tMsg.latitude);
+  Serial.print("  update_id________________________  ");
+  Serial.println(tMsg.update_id);
+  Serial.print("  message_id_______________________  ");
+  Serial.println(tMsg.message_id)  ;
+  Serial.print("  reply_to_message_id______________  ");
+  Serial.println(tMsg.reply_to_message_id);
+  Serial.print("  reply_to_text____________________  ");
+  Serial.println(tMsg.reply_to_text);
+  Serial.print("  query_id_________________________  ");
+  Serial.println(tMsg.query_id);
 }
