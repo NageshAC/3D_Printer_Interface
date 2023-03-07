@@ -1,19 +1,23 @@
 #pragma once
-#define DEBUG
+#include "DEBUG.h"
 #include <UniversalTelegramBot.h>
 #include <WiFiClientSecure.h>
 #include <SD_MMC.h>
 
-#define WAITING_TIME_RESPONSE 10000 // 10s waiting time for responce from BOT
+#define WAITING_TIME_RESPONSE 5000 // 60s waiting time for responce from BOT
+#define BUFF_SIZE 1024*2
 
 // Pre-defined messages
-#define SD_ERR            "SD Card Error.       :("
+#define SD_ERROR          "SD Card Error.       :("
 #define BUSY_MSG          "The Printer is busy.   :P"
 #define NOT_IMPLIMENTED   "This function is not yet implimented.    :("
-#define DOWNLOADING_FILE  "Downloading the file. Please wait!"
-#define DONE_DOWNLOADING  "Done Downloading."
-#define DOWNLOAD_FAILED   "Download Failed."
-#define LARGE_FILE        "Unfortunately, It is not possible to download file larger than 20MB."
+#define DOWNLOADING_FILE  "Downloading the file. Please wait!        ...zzz"
+#define DONE_DOWNLOADING  "Done Downloading.      :)"
+#define DOWNLOAD_FAILED   "Download Failed. Check SD is connected and is formated properly          :("
+#define LARGE_FILE        "Unfortunately, It is not possible to download file larger than 20MB.        :o"
+#define CONNECTION_ERROR  "Connection Error: Couldnot connect to Telegram API. Check internet connection.            :>"
+#define USAGE_INFO_PRINT  "No file uploaded.\nUpload the file and type /print as the caption.   :*"
+#define FOLDER_ERROR      "Folder cannot be created. Check SD is connected and is formated properly.      :("
 
 class Telebot {
     private:
@@ -22,7 +26,6 @@ class Telebot {
       WiFiClientSecure      _client;
       UniversalTelegramBot  _bot;
       String                _lockChatID{""};
-      bool                  _sdInit{false};
 
     public:
       Telebot() = delete;

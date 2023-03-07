@@ -1,3 +1,4 @@
+#include "esp32-hal.h"
 #include "Telebot.hpp"
 
 
@@ -18,14 +19,14 @@ const bool Telebot::initSD(){
     #ifdef DEBUG
     Serial.println("Card Mount Successful");
     #endif
-    _sdInit = true;
+    return true;
   }
   else {
     #ifdef DEBUG
     Serial.println("Card Mount Failed");
     #endif
   }
-  return _sdInit;
+  return false;
 }
 
 // Handle new messages sent by user
@@ -83,19 +84,16 @@ void Telebot::handleMsgs(){
 
 // Handles /print command
 const bool Telebot::handlePrint(const short msgIdx, const bool is_caption){
-  String USAGE_INFO = "No file uploaded.\nUpload the file and type /print as the caption.";
   if (is_caption){
-    downloadFile(_bot.messages[msgIdx]);
+    return downloadFile(_bot.messages[msgIdx]);
   }
   else {
     #ifdef DEBUG
-    Serial.println("File not attached.");
+      Serial.println("File not attached.");
     #endif
-    sendMsg(_bot.messages[msgIdx].chat_id, USAGE_INFO);
+    sendMsg(_bot.messages[msgIdx].chat_id, USAGE_INFO_PRINT);
     return false;
   }
-  sendMsg(_bot.messages[msgIdx].chat_id, NOT_IMPLIMENTED);
-  return true;
 }
 
 // Download file and save to SD card
@@ -105,19 +103,10 @@ inline const bool Telebot::downloadFile(const telegramMessage& tMsg){
   // and name it as "file_name"
 
   // if SD card not initialize
-  if (!_sdInit){
-    if (!initSD()){
-      sendMsg(tMsg.chat_id, SD_ERR);      
-    }
+  if (!initSD()){
+    sendMsg(tMsg.chat_id, SD_ERROR);   
+    return false;   
   }
-
-  sendMsg(tMsg.chat_id, DOWNLOADING_FILE);
-  _isBusy = true;
-
-  // Getting file content from telegram server
-  String urlPath {tMsg.file_path};
-  urlPath = urlPath.substring(25); // length of "https://api.telegram.org/"
-  // String fileContent {_bot.sendGetToTelegram(urlPath).c_str()};
 
   // Saving it in folder "<chat_id>" as "<file_name>"
   String folderPath {"/" + tMsg.chat_id};
@@ -126,13 +115,23 @@ inline const bool Telebot::downloadFile(const telegramMessage& tMsg){
   // if folder doesn't exits -> create
   if (!SD_MMC.exists(folderPath)){
     #ifdef DEBUG
-    Serial.print("Creating folder: ");
-    Serial.println(folderPath);
+      Serial.print("Creating folder: ");
+      Serial.println(folderPath);
     #endif
-    SD_MMC.mkdir(folderPath);
+    if(!SD_MMC.mkdir(folderPath)){
+      #ifdef DEBUG
+        Serial.println(FOLDER_ERROR);
+      #endif
+      sendMsg(tMsg.chat_id, FOLDER_ERROR);   
+      return false;
+    }
   }
 
-  File file = SD_MMC.open(folderPath + filePath, FILE_WRITE);
+  sendMsg(tMsg.chat_id, DOWNLOADING_FILE);
+
+  // Getting file content from telegram server
+  String urlPath {tMsg.file_path};
+  urlPath = urlPath.substring(25); // length of "https://api.telegram.org/"
 
   // Checking connection to BOT
   if (!_client.connected()) {
@@ -146,11 +145,9 @@ inline const bool Telebot::downloadFile(const telegramMessage& tMsg){
     }
   }
 
-  String _filePath;
-  long   _fileSize;
-
   // Send "GET" request
   if (_client.connected()) {
+    _client.flush();
 
     #ifdef DEBUG  
         Serial.println("sending: " + urlPath);
@@ -165,30 +162,23 @@ inline const bool Telebot::downloadFile(const telegramMessage& tMsg){
     _client.println();
 
     // Recieving Responce
+    File file = SD_MMC.open(folderPath + filePath, FILE_WRITE);
     if (file){
       unsigned long now = millis();
-      bool finishedHeaders = false;
-      bool currentLineIsBlank = true;
-      bool responseReceived = false;
-      
+
+      uint8_t* data {new uint8_t[BUFF_SIZE]};
+      uint8_t len;
       while (millis() - now < WAITING_TIME_RESPONSE) {
         while (_client.available()) {
-          char c = _client.read();
-          responseReceived = true;
-
-          if (!finishedHeaders) {
-            if (currentLineIsBlank && c == '\n') finishedHeaders = true;
-          } else {
-            file.write(c);
-            Serial.print(c);
-          }
-          if (c == '\n') currentLineIsBlank = true;
-          else if (c != '\r') currentLineIsBlank = false;
+          now = millis();
+          len = _client.read(data, sizeof(data));
+          file.write(data, len);
         }
 
-        if (responseReceived)
-          break;
+        // if (responseReceived)
+        //   break;
       }
+      delete[] data;
 
       #ifdef DEBUG
           Serial.print("\nTransfer Time:  ");
@@ -198,16 +188,13 @@ inline const bool Telebot::downloadFile(const telegramMessage& tMsg){
       file.close();
     } else {
       sendMsg(tMsg.chat_id, DOWNLOAD_FAILED);
-      _isBusy = false;
       return false;
     }
 
   }
 
-  Serial.println(_isBusy);
-  _isBusy = false;
+  
   sendMsg(tMsg.chat_id, DONE_DOWNLOADING);
-  Serial.println(_isBusy);
   // sPrint_telegramMessage(tMsg);
   return true;
 }
