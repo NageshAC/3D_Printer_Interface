@@ -28,9 +28,6 @@ Wifi::Wifi(String* str, const bool rst )
   String value{_botTokenParam -> getValue()};
   Serial.print("Token:  ");
   Serial.println(value);
-  // if (value == ""){
-  //   value = BOT_TOKEN;
-  // }
 
   *_botToken = value;
 

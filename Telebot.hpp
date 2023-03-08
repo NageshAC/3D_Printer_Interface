@@ -4,7 +4,8 @@
 #include <WiFiClientSecure.h>
 #include <SD_MMC.h>
 
-#define WAITING_TIME_RESPONSE 5000 // 60s waiting time for responce from BOT
+#define WAITING_TIME_RESPONSE 5000  // 60s waiting time for responce from BOT
+#define MAX_WAITING_TIME      15000 // 15s 
 #define BUFF_SIZE 1024*2
 
 // Pre-defined messages

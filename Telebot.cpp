@@ -165,24 +165,40 @@ inline const bool Telebot::downloadFile(const telegramMessage& tMsg){
     File file = SD_MMC.open(folderPath + filePath, FILE_WRITE);
     if (file){
       unsigned long now = millis();
+      unsigned long TT = millis();
 
+
+      String header;
       uint8_t* data {new uint8_t[BUFF_SIZE]};
       uint8_t len;
+      bool isHeader = true;
+      bool isOK = false;
       while (millis() - now < WAITING_TIME_RESPONSE) {
         while (_client.available()) {
           now = millis();
-          len = _client.read(data, sizeof(data));
-          file.write(data, len);
-        }
 
-        // if (responseReceived)
-        //   break;
+          if (isHeader){
+            header = _client.readStringUntil('\n');
+            // Serial.print(header);
+            // Serial.print("\t:\t");
+            // Serial.println(header.lastIndexOf("200 OK"));
+            if (!isOK && header.lastIndexOf("200 OK")!=-1) isOK = true;
+            if (header == "\r") isHeader = false;
+          } else if (isOK){
+            len = _client.read(data, sizeof(data));
+            file.write(data, len);
+          } else {
+            #ifdef DEBUG
+              Serial.println("Client Error check header");
+            #endif
+          }
+        }
       }
-      delete[] data;
+      delete[] data;      
 
       #ifdef DEBUG
           Serial.print("\nTransfer Time:  ");
-          Serial.println(millis() - now );
+          Serial.println(millis() - TT);
       #endif
 
       file.close();
